@@ -21,6 +21,12 @@ python seed.py
 python run.py
 ```
 
+Para rodar os testes:
+
+```bash
+python -m unittest discover tests
+```
+
 O servidor sobe em `http://localhost:5000`. O banco SQLite é criado
 automaticamente em `backend/trocatroca.db` na primeira execução.
 
@@ -80,9 +86,11 @@ Authorization: Bearer <token>
   possível propor troca pelo próprio item.
 - Ao **aceitar** uma proposta, os dois itens envolvidos passam para o
   status `Trocado` e um registro de histórico (`Troca`) é criado
-  automaticamente, encerrando também qualquer outra proposta pendente
-  para esses itens só quando o usuário agir sobre elas (elas continuam
-  pendentes até serem canceladas/recusadas manualmente).
+  automaticamente. Todas as **outras propostas pendentes** que usam um
+  desses itens (oferecido ou desejado) são canceladas automaticamente, e
+  a resposta de `/aceitar` inclui `propostas_canceladas` com a quantidade.
+  Se um dos itens já não estiver `Disponível` no momento de aceitar, a
+  proposta é cancelada e a API responde `409`.
 - Senhas nunca são armazenadas em texto puro (hash via Werkzeug).
 
 ## Próximo passo no frontend

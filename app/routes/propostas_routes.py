@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+from sqlalchemy import or_
 
 from app.auth import login_obrigatorio
 from app.extensions import db
@@ -85,6 +86,33 @@ def _buscar_proposta_pendente(proposta_id):
     return proposta, None
 
 
+def _encerrar_propostas_conflitantes(proposta_aceita):
+    """Cancela as outras propostas pendentes que usam algum dos itens trocados.
+
+    Depois que uma troca é concluída, os dois itens ficam com status
+    'Trocado' e não podem mais participar de outra negociação. Qualquer
+    proposta pendente que ainda os referencie (como item oferecido ou
+    desejado) passa a 'cancelada'.
+
+    Retorna a quantidade de propostas encerradas.
+    """
+    ids_itens = [proposta_aceita.item_oferecido_id, proposta_aceita.item_desejado_id]
+
+    conflitantes = Proposta.query.filter(
+        Proposta.id != proposta_aceita.id,
+        Proposta.status == "pendente",
+        or_(
+            Proposta.item_oferecido_id.in_(ids_itens),
+            Proposta.item_desejado_id.in_(ids_itens),
+        ),
+    ).all()
+
+    for outra in conflitantes:
+        outra.status = "cancelada"
+
+    return len(conflitantes)
+
+
 @propostas_bp.post("/propostas/<int:proposta_id>/cancelar")
 @login_obrigatorio
 def cancelar_proposta(proposta_id):
@@ -117,9 +145,20 @@ def aceitar_proposta(proposta_id):
     if proposta.item_desejado.proprietario_id != request.usuario_atual.id:
         return jsonify({"erro": "Você não pode aceitar essa proposta."}), 403
 
+    # Garante que nenhum dos itens foi trocado por outra proposta enquanto
+    # esta ainda estava pendente.
+    if (
+        proposta.item_oferecido.status != "Disponível"
+        or proposta.item_desejado.status != "Disponível"
+    ):
+        proposta.status = "cancelada"
+        db.session.commit()
+        return jsonify({"erro": "Um dos itens não está mais disponível para troca."}), 409
+
     proposta.status = "aceita"
     proposta.item_oferecido.status = "Trocado"
     proposta.item_desejado.status = "Trocado"
+    canceladas = _encerrar_propostas_conflitantes(proposta)
 
     troca = Troca(
         proposta_id=proposta.id,
@@ -131,7 +170,9 @@ def aceitar_proposta(proposta_id):
     db.session.add(troca)
     db.session.commit()
 
-    return jsonify(proposta.to_dict()), 200
+    resposta = proposta.to_dict()
+    resposta["propostas_canceladas"] = canceladas
+    return jsonify(resposta), 200
 
 
 @propostas_bp.post("/propostas/<int:proposta_id>/recusar")
